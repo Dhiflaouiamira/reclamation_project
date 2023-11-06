@@ -2,6 +2,7 @@ const express = require('express');
 const Reclamation = require('../models/Reclamation');
 const User = require('../models/User'); // Import the User model
 const auth = require ('../middleware/auth');
+const crypto = require('crypto');
 
 const router = express.Router();
 
@@ -36,21 +37,53 @@ router.get('/user/:userId', async (req, res) => {
     }
 });
 
+function encryptReclamation(reclamation,key) {
+    const iv = crypto.randomBytes(16);
+
+    const encryptionKey =
+      "98232bac1c8ecb4af5c704a6636c671da65bde195e5ef38bbe1b6feadd60e3f0";
+    const cipher = crypto.createCipher("aes-256-cbc", encryptionKey, Buffer.from(key, 'hex'), iv);
+    let encryptedReclamation = cipher.update(reclamation, "utf8", "hex");
+    encryptedReclamation += cipher.final("hex");
+    return {
+        iv: iv.toString('hex'),
+
+        encryptedReclamation
+    }
+  }
+
 // POST a reclamation for a specific user
 router.post('/:userId', async (req, res) => {
     const { userId } = req.params;
+    const { titre, description } = req.body;
+
     try {
+        const encryptedTitre = encryptReclamation(titre, 'votre_clé_secrète');
+        const encryptedDescription = encryptReclamation(description, 'votre_clé_secrète');
+
         const user = await User.findById(userId);
         if (!user) {
             return res.status(404).send('User not found');
         }
-        const reclamation = await Reclamation.create(req.body);
-        user.reclamations.push(reclamation);
-        await user.save();
-        res.send(reclamation);
+
+        const newReclamation = new Reclamation({
+            titre: encryptedTitre.encryptedReclamation, // Utilisez la propriété `encryptedReclamation`
+            description: encryptedDescription.encryptedReclamation, // Utilisez la propriété `encryptedReclamation`
+            user: userId,
+        });
+
+        // Ajoutez la réclamation à la liste des réclamations de l'utilisateur
+        user.reclamations.push(newReclamation);
+
+        await user.save(); // Sauvegardez l'utilisateur avec la nouvelle réclamation
+
+        // Sauvegardez la réclamation séparément si nécessaire
+        await newReclamation.save();
+
+        res.status(201).json(newReclamation);
     } catch (error) {
         console.error(error);
-        res.status(400).send(error);
+        res.status(500).json({ message: "Erreur lors de la création de la réclamation" });
     }
 });
 //POST
@@ -96,5 +129,9 @@ router.delete('/:id', (req, res) => {
         .then(result => res.status(204).send())
         .catch(err => res.status(404).json(err));
 });
+
+
+
+
 
 module.exports = router;
